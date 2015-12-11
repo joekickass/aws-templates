@@ -1,0 +1,21 @@
+---
+
+- name: Docker service stack
+  hosts: local
+  connection: local
+  gather_facts: false
+
+  tasks:
+      - name: :Launch docker service stack
+        cloudformation:
+            stack_name: "{{milieu}}-docker-service"
+            state: present
+            region: eu-west-1
+            disable_rollback: true
+            template: docker-autoscaling-template.json
+            template_parameters:
+                DomainName: example.com
+        register: dockerservice
+
+      - name: show stack outputs
+        debug: msg="Outputs: {{dockerservice.stack_outputs}}"

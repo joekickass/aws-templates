@@ -1,0 +1,131 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+  "Description" : "",
+
+  "Resources" : {
+
+    "BackupBucket" : {
+      "Type" : "AWS::S3::Bucket",
+      "Properties" : {
+        "AccessControl" : "Private"
+      }
+    },
+
+    "ProductCatalogTable": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "TableName": "ProductCatalog",
+        "AttributeDefinitions": [
+          { "AttributeName": "Id", "AttributeType": "N" }
+        ],
+        "KeySchema": [
+          { "AttributeName": "Id", "KeyType": "HASH" }
+        ],
+        "ProvisionedThroughput": {
+          "ReadCapacityUnits": "1",
+          "WriteCapacityUnits": "1"
+        }
+      }
+    },
+
+    "ProductCatalogBackup" : {
+      "Type" : "AWS::DataPipeline::Pipeline",
+      "Properties" : {
+        "Description" : "Backup Product Catalog table to S3",
+        "Name" : "DynamoDbBackup",
+        "ParameterObjects" : [
+          { "Id": "myDDBReadThroughputRatio",
+            "Attributes": [
+              { "Key": "description", "StringValue": "DynamoDB read throughput ratio" },
+              { "Key": "type", "StringValue": "Double" },
+              { "Key": "default", "StringValue": "0.2" }
+            ]
+          },
+          { "Id": "myOutputS3Loc",
+            "Attributes": [
+              { "Key": "description", "StringValue": "S3 output bucket" },
+              { "Key": "type", "StringValue": "AWS::S3::ObjectKey" },
+              { "Key": "default", "StringValue": { "Fn::Join" : [ "", [ "s3://", { "Ref": "BackupBucket" } ] ] } }
+            ]
+          },
+          { "Id": "myDDBTableName",
+            "Attributes": [
+              { "Key": "description", "StringValue": "DynamoDB Table Name " },
+              { "Key": "type", "StringValue": "String" }
+            ]
+          }
+        ],
+
+        "ParameterValues" : [
+          { "Id": "myDDBTableName", "StringValue": { "Ref": "ProductCatalogTable" } }
+        ],
+
+        "PipelineObjects" : [
+          { "Id": "S3BackupLocation",
+            "Name": "Copy data to this S3 location",
+            "Fields": [
+              { "Key": "type", "StringValue": "S3DataNode" },
+              { "Key": "dataFormat", "RefValue": "DDBExportFormat" },
+              { "Key": "directoryPath", "StringValue": "#{myOutputS3Loc}/#{myDDBTableName}" }
+            ]
+          },
+          { "Id": "DDBSourceTable",
+            "Name": "DDBSourceTable",
+            "Fields": [
+              { "Key": "tableName", "StringValue": "#{myDDBTableName}" },
+              { "Key": "type", "StringValue": "DynamoDBDataNode" },
+              { "Key": "dataFormat", "RefValue": "DDBExportFormat" },
+              { "Key": "readThroughputPercent", "StringValue": "#{myDDBReadThroughputRatio}" }
+            ]
+          },
+          { "Id": "DDBExportFormat",
+            "Name": "DDBExportFormat",
+            "Fields": [
+              { "Key": "type", "StringValue": "DynamoDBExportDataFormat" }
+            ]
+          },
+          { "Id": "TableBackupActivity",
+            "Name": "TableBackupActivity",
+            "Fields": [
+              { "Key": "resizeClusterBeforeRunning", "StringValue": "true" },
+              { "Key": "type", "StringValue": "HiveCopyActivity" },
+              { "Key": "input", "RefValue": "DDBSourceTable" },
+              { "Key": "runsOn", "RefValue": "EmrClusterForBackup" },
+              { "Key": "output", "RefValue": "S3BackupLocation" }
+            ]
+          },
+          { "Id": "DefaultSchedule",
+            "Name": "Daily",
+            "Fields": [
+              { "Key": "type", "StringValue": "Schedule" },
+              { "Key": "startDateTime", "StringValue": "2016-02-25T12:30:00" },
+              { "Key": "period", "StringValue": "1 Day" }
+            ]
+          },
+          { "Id": "Default",
+            "Name": "Default",
+            "Fields": [
+              { "Key": "type", "StringValue": "Default" },
+              { "Key": "scheduleType", "StringValue": "cron" },
+              { "Key": "failureAndRerunMode", "StringValue": "CASCADE" },
+              { "Key": "role", "StringValue": "DataPipelineDefaultRole" },
+              { "Key": "resourceRole", "StringValue": "DataPipelineDefaultResourceRole" },
+              { "Key": "schedule", "RefValue": "DefaultSchedule" }
+            ]
+          },
+          { "Id": "EmrClusterForBackup",
+            "Name": "EmrClusterForBackup",
+            "Fields": [
+              { "Key": "terminateAfter", "StringValue": "1 Hours" },
+              { "Key": "amiVersion", "StringValue": "3.3.2" },
+              { "Key": "masterInstanceType", "StringValue": "m1.medium" },
+              { "Key": "coreInstanceType", "StringValue": "m1.medium" },
+              { "Key": "coreInstanceCount", "StringValue": "1" },
+              { "Key": "type", "StringValue": "EmrCluster" }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

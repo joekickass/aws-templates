@@ -1,0 +1,200 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+  "Description" : "Single instance template",
+
+  "Parameters": {
+
+    "VpcName": {
+      "Description": "Name of the VPC",
+      "Type": "String",
+      "Default" : "default"
+    },
+    "InstanceType": {
+      "Description": "EC2 instance type",
+      "Type": "String",
+      "Default": "t2.micro"
+    },
+    "ImageName": {
+      "Description": "Name of Image",
+      "Type": "String",
+      "Default": "ami 201604111516"
+    },
+    "KeyName": {
+      "Description": "Existing EC2 KeyPair to enable SSH access",
+      "Type": "String",
+      "Default": "my-key"
+    }
+  },
+
+  "Resources" : {
+
+    "Vpc": {
+      "Type": "Custom::VpcDependency",
+      "Properties": {
+        "ServiceToken": {
+            "Fn::Join": [ "", [ "arn:aws:lambda:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":function:vpcDependency" ] ]
+        },
+        "VpcName": { "Ref": "VpcName" }
+      }
+    },
+
+    "Image": {
+      "Type": "Custom::ImageDependency",
+      "Properties": {
+        "ServiceToken": {
+            "Fn::Join": [ "", [ "arn:aws:lambda:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":function:imageDependency" ] ]
+        },
+        "ImageName": { "Ref": "ImageName" }
+      }
+    },
+
+    "PublicHTTPSSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Public HTTPS access",
+        "VpcId": {
+          "Fn::GetAtt": [ "Vpc", "VpcId" ]
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "443",
+            "ToPort": "443",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "80",
+            "ToPort": "80",
+            "CidrIp": "0.0.0.0/0"
+          }
+        ]
+      }
+    },
+
+    "Instance" : {
+      "Type" : "AWS::EC2::Instance",
+      "Properties" : {
+        "InstanceType" : {
+          "Ref" : "InstanceType"
+        },
+        "ImageId" : {
+            "Fn::GetAtt" : ["Image", "ImageId"]
+        },
+        "IamInstanceProfile" : {
+            "Ref" : "InstanceProfile"
+        },
+        "KeyName" : {
+          "Ref" : "KeyName"
+        },
+        "SecurityGroupIds" : [ {
+          "Ref" : "PublicHTTPSSecurityGroup"
+        }]
+      }
+    },
+
+    "InstanceProfile" : {
+      "Type" : "AWS::IAM::InstanceProfile",
+      "Properties" : {
+        "Path" : "/",
+        "Roles" : { "Ref": "Role" }
+      }
+    },
+
+    "Role" : {
+      "Type" : "AWS::IAM::Role",
+      "Properties" : {
+        "AssumeRolePolicyDocument" : {
+          "Version" : "2012-10-17",
+          "Statement" : [
+            {
+              "Effect" : "Allow",
+              "Principal" : {
+                "Service" : [ "ec2.amazonaws.com" ]
+              },
+              "Action": [ "sts:AssumeRole" ]
+            }
+          ]
+        },
+        "Path": "/",
+        "ManagedPolicyArns": [ { "Ref" : "BasicPolicy" } ]
+      }
+    },
+
+    "BasicPolicy" : {
+      "Type" : "AWS::IAM::ManagedPolicy",
+      "Properties" : {
+        "Description" : "Basic access required for an EC2 instance",
+        "PolicyDocument" : {
+          "Version" : "2012-10-17",
+          "Statement" : [
+            {
+              "Effect" : "Allow",
+              "Action" : [
+                "ec2:Describe*",
+                "elasticloadbalancing:Describe*",
+                "autoscaling:Describe*",
+                "cloudwatch:Describe*",
+                "cloudwatch:List*",
+                "cloudwatch:Get*",
+                "sns:Get*",
+                "sns:List*",
+                "cloudformation:Describe*",
+                "cloudformation:Get*",
+                "cloudformation:List*",
+                "cloudformation:Validate*",
+                "cloudformation:Estimate*",
+                "ecr:BatchCheckLayerAvailability",
+                "ecr:BatchGetImage",
+                "ecr:GetDownloadUrlForLayer",
+                "ecr:GetAuthorizationToken"
+              ],
+              "Resource" : "*"
+            },
+            {
+              "Effect" : "Allow",
+              "Action" : [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents",
+                "logs:DescribeLogStreams"
+              ],
+              "Resource" : "arn:aws:logs:*:*:*"
+            }
+          ]
+        }
+      }
+    }
+  },
+
+  "Outputs" : {
+    "Region": {
+      "Value": { "Ref": "AWS::Region" },
+      "Description": "AWS Region"
+    },
+    "VpcId": {
+      "Value": { "Fn::GetAtt": [ "Vpc", "VpcId" ] },
+      "Description": "Vpc Id"
+    },
+    "BasicPolicyArn" : {
+      "Value" : { "Ref" : "BasicPolicy" },
+      "Description" : "Basic access required for an EC2 instance"
+    },
+    "Role" : {
+      "Value" : { "Ref": "Role" },
+      "Description": "Role Id"
+    },
+    "PublicHTTPSSecurityGroupId" : {
+      "Value" : { "Ref" : "PublicHTTPSSecurityGroup" },
+      "Description" : "Public HTTPS SecurityGroup ID"
+    },
+    "InstanceId" : {
+      "Value" : { "Ref" : "Instance" },
+      "Description" : "Instance id"
+    },
+    "InstanceUrl" : {
+      "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "Instance", "PublicDnsName" ] } ] ] },
+      "Description" : "Public Amazon URL"
+    }
+  }
+}

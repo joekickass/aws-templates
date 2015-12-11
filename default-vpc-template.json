@@ -1,0 +1,38 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+  "Description" : "Using https://github.com/sonyxperiadev/amazon-custom-resources VPC dependency",
+
+  "Parameters": {
+
+    "VpcName": {
+      "Description": "Name of the VPC",
+      "Type": "String",
+      "Default" : "default"
+    }
+  },
+
+  "Resources" : {
+
+    "Vpc": {
+      "Type": "Custom::VpcDependency",
+      "Properties": {
+        "ServiceToken": {
+            "Fn::Join": [ "", [ "arn:aws:lambda:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":function:vpcDependency" ] ]
+        },
+        "VpcName": { "Ref": "VpcName" }
+      }
+    }
+  },
+
+  "Outputs": {
+
+    "VpcId": {
+      "Value": { "Fn::GetAtt": [ "Vpc", "VpcId" ] },
+      "Description": "Vpc Id"
+    },
+    "SubnetIds": {
+      "Value": { "Fn::GetAtt": [ "Vpc", "SubnetIds" ] },
+      "Description": "Comma-separated subnet ids"
+    }
+  }
+}

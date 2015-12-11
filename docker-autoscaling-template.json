@@ -1,0 +1,658 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+  "Description" : "Docker instance template",
+
+  "Parameters": {
+
+    "VpcName": {
+      "Description": "Name of the VPC",
+      "Type": "String",
+      "Default" : "default"
+    },
+    "DomainName": {
+      "Description": "Domain name for DNS",
+      "Type": "String"
+    },
+    "InstanceType": {
+      "Description": "EC2 instance type",
+      "Type": "String",
+      "Default": "t2.micro"
+    },
+    "ImageName": {
+      "Description": "Name of Image",
+      "Type": "String",
+      "Default": "ami 201604111516"
+    },
+    "KeyName": {
+      "Description": "Existing EC2 KeyPair to enable SSH access",
+      "Type": "String",
+      "Default": "my-key"
+    },
+    "DockerFlags": {
+      "Description": "docker run flags",
+      "Type": "String",
+      "Default": "-p 80:80"
+    },
+    "RepositoryName": {
+      "Description": "Name of ECR repository",
+      "Type": "String"
+    },
+    "ServiceName": {
+      "Description": "Name of service",
+      "Type": "String"
+    },
+    "ServiceVersion": {
+      "Description": "Version of the service",
+      "Type": "String"
+    },
+    "CertificateName": {
+      "Description": "Name of certificate",
+      "Type": "String",
+      "Default": "star_example_com"
+    },
+    "HealthCheckTarget": {
+      "Type": "String",
+      "Default": "HTTP:80/health",
+      "Description": "Health check target, see http://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-ec2-elb-health-check.html#cfn-elb-healthcheck-target"
+    },
+    "AutoscalingMinSize": {
+        "Description": "Min number of instances in autoscaling group",
+        "Type": "String",
+        "Default": "1"
+    },
+    "AutoscalingMaxSize": {
+        "Description": "Max number of instances in autoscaling group",
+        "Type": "String",
+        "Default": "6"
+    },
+    "CpuAlarmHighPeriod": {
+        "Description": "The period between high CPU alarm checks",
+        "Type": "String",
+        "Default": "120"
+    },
+    "CpuAlarmHighPeriodCount": {
+        "Description": "The amount of high CPU periods alarm has to be fulfilled",
+        "Type": "String",
+        "Default": "2"
+    },
+    "CpuAlarmHighThreshold": {
+        "Description": "The amount of high CPU needed to trigger",
+        "Type": "String",
+        "Default": "60"
+    },
+    "CpuAlarmLowPeriod": {
+        "Description": "The period between low CPU alarm checks",
+        "Type": "String",
+        "Default": "600"
+    },
+    "CpuAlarmLowPeriodCount": {
+        "Description": "The amount of low CPU periods alarm has to be fulfilled",
+        "Type": "String",
+        "Default": "6"
+    },
+    "CpuAlarmLowThreshold": {
+        "Description": "The amount of low CPU needed to trigger",
+        "Type": "String",
+        "Default": "30"
+    }
+  },
+
+  "Mappings" : {
+    "RegionMap" : {
+      "us-east-1" : { "elbAccount" : "127311923021" },
+      "us-west-1" : { "elbAccount" : "027434742980" },
+      "us-west-2" : { "elbAccount" : "797873946194" },
+      "eu-west-1" : { "elbAccount" : "156460612806" },
+      "eu-central-1" : { "elbAccount" : "054676820928" },
+      "ap-northeast-1" : { "elbAccount" : "582318560864" },
+      "ap-southeast-1" : { "elbAccount" : "114774131450" },
+      "ap-southeast-2" : { "elbAccount" : "783225319266" },
+      "sa-east-1" : { "elbAccount" : "507241528517" }
+    }
+  },
+
+  "Resources" : {
+
+    "Vpc": {
+      "Type": "Custom::VpcDependency",
+      "Properties": {
+        "ServiceToken": {
+          "Fn::Join": [ "", [ "arn:aws:lambda:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":function:vpcDependency" ] ]
+        },
+        "VpcName": { "Ref": "VpcName" }
+      }
+    },
+
+    "Route53": {
+      "Type": "Custom::Route53Dependency",
+      "Properties": {
+        "ServiceToken": {
+            "Fn::Join": [ "", [ "arn:aws:lambda:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":function:route53Dependency" ] ]
+        },
+        "DomainName": { "Ref": "DomainName" }
+      }
+    },
+
+    "Image": {
+      "Type": "Custom::ImageDependency",
+      "Properties": {
+        "ServiceToken": {
+          "Fn::Join": [ "", [ "arn:aws:lambda:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":function:imageDependency" ] ]
+        },
+        "ImageName": { "Ref": "ImageName" }
+      }
+    },
+
+    "Certificate": {
+      "Type": "Custom::CertificateDependency",
+      "Properties": {
+        "ServiceToken": {
+          "Fn::Join": [ "", [ "arn:aws:lambda:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":function:certificateDependency" ] ]
+        },
+        "CertificateName": { "Ref": "CertificateName" }
+      }
+    },
+
+    "PublicHTTPSSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Public HTTPS access",
+        "VpcId": {
+          "Fn::GetAtt": [ "Vpc", "VpcId" ]
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "443",
+            "ToPort": "443",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "80",
+            "ToPort": "80",
+            "CidrIp": "0.0.0.0/0"
+          }
+        ]
+      }
+    },
+
+    "LaunchConfig": {
+      "Type": "AWS::AutoScaling::LaunchConfiguration",
+      "Properties" : {
+        "InstanceType" : {
+          "Ref" : "InstanceType"
+        },
+        "ImageId" : {
+          "Fn::GetAtt" : ["Image", "ImageId"]
+        },
+        "IamInstanceProfile" : {
+          "Ref" : "InstanceProfile"
+        },
+        "KeyName" : {
+          "Ref" : "KeyName"
+        },
+        "SecurityGroupIds" : [ {
+          "Ref" : "PublicHTTPSSecurityGroup"
+        } ],
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": ["", [
+              "#!/bin/sh\n",
+
+              "/opt/aws/bin/cfn-init -v ",
+              " --stack ", { "Ref" : "AWS::StackName" },
+              " --resource DockerInstance ",
+              " --region ", { "Ref" : "AWS::Region" },
+              " --configsets all\n",
+
+              "/opt/aws/bin/cfn-signal ",
+              " --exit-code $? ",
+              " --reason \"Docker server up\" '",
+              { "Ref" : "WaitHandle" },
+              "'\n",
+              "/opt/aws/bin/cfn-hup\n"
+            ] ]
+          }
+        },
+        "Metadata": {
+          "AWS::CloudFormation::Init": {
+            "configSets": {
+              "all": [ "install_cfg", "install_docker", "start_docker" ]
+            },
+            "install_cfg": {
+              "files": {
+                "/tmp/docker-start.sh": {
+                  "content": { "Fn::Join": [ "", [
+                    "#!/bin/bash -x\n",
+                    "docker stop app",
+                    "\n",
+                    "docker rm app",
+                    "\n",
+                    "docker run -d ",
+                    { "Ref": "DockerFlags" },
+                    " --add-host=dockerhost:$(ifconfig docker0 | grep 'inet addr' | sed -r 's/.*inet addr:([0-9.]*).*$/\\1/') \\\n",
+                    " --env STATSD_HOST=dockerhost \\\n",
+                    " --env-file ./stack-outputs.env \\\n",
+                    " --restart always \\\n",
+                    " --log-opt max-size=128m --log-opt max-file=8 \\\n",
+                    " --name app ",
+                    { "Ref" : "AWS::AccountId" },
+                    ".dkr.ecr.",
+                    { "Ref" : "AWS::Region" },
+                    ".amazonaws.com/",
+                    { "Ref": "RepositoryName" },
+                    "/",
+                    { "Ref": "ServiceName" },
+                    ":",
+                    { "Ref": "ServiceVersion" },
+                    "\n"
+                  ] ] },
+                  "mode"  : "0755",
+                  "owner" : "root",
+                  "group" : "root"
+                },
+                "/tmp/stack-outputs.env": {
+                  "content" :  { "Fn::Join" : ["", [
+                    "ServiceName=",
+                    { "Ref": "ServiceName" },
+                    "\n",
+                    "ServiceVersion=",
+                    { "Ref": "ServiceVersion" },
+                    "\n"
+                  ] ] }
+                },
+                "/etc/cfn/cfn-hup.conf" : {
+                  "content" : { "Fn::Join" : ["", [
+                    "[main]\n",
+                    "stack=", { "Ref" : "AWS::StackName" }, "\n",
+                    "region=", { "Ref" : "AWS::Region" }, "\n",
+                    "interval=1\n"
+                  ] ] },
+                  "mode"    : "000400",
+                  "owner"   : "root",
+                  "group"   : "root"
+                },
+                "/etc/cfn/hooks.d/cfn-auto-reloader.conf" : {
+                  "content": { "Fn::Join" : ["", [
+                    "[cfn-auto-reloader-hook]\n",
+                    "triggers=post.update\n",
+                    "path=Resources.DockerInstance.Metadata.AWS::CloudFormation::Init\n",
+                    "action=/opt/aws/bin/cfn-init -v ",
+                    " --stack ", { "Ref" : "AWS::StackName" },
+                    " --resource DockerInstance ",
+                    " --region ", { "Ref" : "AWS::Region" },
+                    " --configsets all\n",
+                    "runas=root\n"
+                  ] ] }
+                }
+              },
+              "services" : {
+                "sysvinit" : {
+                  "cfn-hup" : {
+                    "enabled" : "true",
+                    "ensureRunning" : "true",
+                    "files" : [
+                      "/etc/cfn/cfn-hup.conf",
+                      "/etc/cfn/hooks.d/cfn-auto-reloader.conf"
+                    ]
+                  }
+                }
+              }
+            },
+            "install_docker": {
+              "commands": {
+                "1-create-app-dir": {
+                  "command": "mkdir -p /srv/app"
+                },
+                "2-move-files": {
+                  "command": "mv -f /tmp/*.sh /tmp/*.env /srv/app"
+                }
+              }
+            },
+            "start_docker": {
+              "commands": {
+                "1-docker-login-ecr": {
+                  "command": {
+                    "Fn::Join": ["", [
+                      "$(aws ecr get-login --region ", { "Ref" : "AWS::Region" }, ")"
+                    ] ]
+                  }
+                },
+                "2-docker-pull": {
+                  "command": {
+                    "Fn::Join": ["", [
+                      "docker pull ",
+                      { "Ref" : "AWS::AccountId" },
+                      ".dkr.ecr.",
+                      { "Ref" : "AWS::Region" },
+                      ".amazonaws.com/",
+                      { "Ref": "RepositoryName" },
+                      "/",
+                      { "Ref": "ServiceName" },
+                      ":",
+                      { "Ref": "ServiceVersion" }
+                    ]]
+                  }
+                },
+                "3-docker-start": {
+                  "command": "(cd /srv/app && ./docker-start.sh)"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "InstanceProfile" : {
+      "Type" : "AWS::IAM::InstanceProfile",
+      "Properties" : {
+        "Path" : "/",
+        "Roles" : { "Ref": "Role" }
+      }
+    },
+
+    "Role" : {
+      "Type" : "AWS::IAM::Role",
+      "Properties" : {
+        "AssumeRolePolicyDocument" : {
+          "Version" : "2012-10-17",
+          "Statement" : [
+            {
+              "Effect" : "Allow",
+              "Principal" : {
+                "Service" : [ "ec2.amazonaws.com" ]
+              },
+              "Action": [ "sts:AssumeRole" ]
+            }
+          ]
+        },
+        "Path": "/",
+        "ManagedPolicyArns": [ { "Ref" : "BasicPolicy" } ]
+      }
+    },
+
+    "BasicPolicy" : {
+      "Type" : "AWS::IAM::ManagedPolicy",
+      "Properties" : {
+        "Description" : "Basic access required for an EC2 instance",
+        "PolicyDocument" : {
+          "Version" : "2012-10-17",
+          "Statement" : [
+            {
+              "Effect" : "Allow",
+              "Action" : [
+                "ec2:Describe*",
+                "elasticloadbalancing:Describe*",
+                "autoscaling:Describe*",
+                "cloudwatch:Describe*",
+                "cloudwatch:List*",
+                "cloudwatch:Get*",
+                "sns:Get*",
+                "sns:List*",
+                "cloudformation:Describe*",
+                "cloudformation:Get*",
+                "cloudformation:List*",
+                "cloudformation:Validate*",
+                "cloudformation:Estimate*",
+                "ecr:BatchCheckLayerAvailability",
+                "ecr:BatchGetImage",
+                "ecr:GetDownloadUrlForLayer",
+                "ecr:GetAuthorizationToken"
+              ],
+              "Resource" : "*"
+            }
+          ]
+        }
+      }
+    },
+
+    "WaitHandle" : {
+      "Type" : "AWS::CloudFormation::WaitConditionHandle"
+    },
+
+    "WaitCondition" : {
+      "Type" : "AWS::CloudFormation::WaitCondition",
+      "Properties" : {
+        "Handle" : {"Ref" : "WaitHandle"},
+        "Timeout" : "300"
+      }
+    },
+
+    "AutoScalingGroup": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "Version": "2009-05-15",
+      "Properties": {
+        "AvailabilityZones": { "Fn::GetAZs" : "" },
+        "LaunchConfigurationName": {
+          "Ref": "LaunchConfig"
+        },
+        "MinSize": {
+            "Ref": "AutoscalingMinSize"
+        },
+        "DesiredCapacity": {
+            "Ref": "AutoscalingMinSize"
+        },
+        "MaxSize": {
+            "Ref": "AutoscalingMaxSize"
+        },
+        "LoadBalancerNames" : [ { "Ref" : "LoadBalancer" } ],
+        "HealthCheckType": "ELB",
+        "HealthCheckGracePeriod": 600,
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": { "Ref": "AWS::StackName" },
+            "PropagateAtLaunch": true
+          }
+        ]
+      }
+    },
+
+
+    "AutoScaleUpPolicy" : {
+      "Type" : "AWS::AutoScaling::ScalingPolicy",
+      "Properties" : {
+        "AdjustmentType" : "ChangeInCapacity",
+        "AutoScalingGroupName" : { "Ref" : "AutoScalingGroup" },
+        "Cooldown" : "60",
+        "ScalingAdjustment" : "1"
+      }
+    },
+
+    "AutoScaleDownPolicy" : {
+      "Type" : "AWS::AutoScaling::ScalingPolicy",
+      "Properties" : {
+        "AdjustmentType" : "ChangeInCapacity",
+        "AutoScalingGroupName" : { "Ref" : "AutoScalingGroup" },
+        "Cooldown" : "60",
+        "ScalingAdjustment" : "-1"
+      }
+    },
+
+    "CPUAlarmHigh": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "Scale-up if CPU > CpuAlarmLowThreshold",
+        "MetricName": "CPUUtilization",
+        "Namespace": "AWS/EC2",
+        "Statistic": "Average",
+        "Period": { "Ref": "CpuAlarmHighPeriod" },
+        "EvaluationPeriods": { "Ref": "CpuAlarmHighPeriodCount" },
+        "Threshold": { "Ref": "CpuAlarmHighThreshold" },
+        "AlarmActions": [ { "Ref": "AutoScaleUpPolicy" } ],
+        "Dimensions": [
+          {
+            "Name": "AutoScalingGroupName",
+            "Value": { "Ref": "AutoScalingGroup" }
+          }
+        ],
+        "ComparisonOperator": "GreaterThanThreshold"
+      }
+    },
+
+    "CPUAlarmLow": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "Scale-down if CPU < CpuAlarmLowThreshold",
+        "MetricName": "CPUUtilization",
+        "Namespace": "AWS/EC2",
+        "Statistic": "Average",
+        "Period": { "Ref": "CpuAlarmLowPeriod" },
+        "EvaluationPeriods": { "Ref": "CpuAlarmLowPeriodCount" },
+        "Threshold": { "Ref": "CpuAlarmLowThreshold" },
+        "AlarmActions": [ { "Ref": "AutoScaleDownPolicy" } ],
+        "Dimensions": [
+          {
+            "Name": "AutoScalingGroupName",
+            "Value": { "Ref": "AutoScalingGroup" }
+          }
+        ],
+        "ComparisonOperator": "LessThanThreshold"
+      }
+    },
+
+    "LoadBalancer" : {
+      "Type" : "AWS::ElasticLoadBalancing::LoadBalancer",
+      "DependsOn": ["Certificate"],
+      "Properties" : {
+        "CrossZone": true,
+        "SecurityGroups" : { "Ref" : "PublicHTTPSSecurityGroup" },
+        "AvailabilityZones": { "Fn::GetAZs" : "" },
+        "Listeners" : [
+          {
+            "InstancePort" : "80",
+            "InstanceProtocol" : "HTTP",
+            "LoadBalancerPort" : "80",
+            "Protocol" : "HTTP"
+          },
+          {
+            "InstancePort" : "80",
+            "InstanceProtocol" : "HTTP",
+            "LoadBalancerPort" : "443",
+            "Protocol" : "HTTPS",
+            "SSLCertificateId" : {
+              "Fn::GetAtt": ["Certificate", "Arn"]
+            }
+          }
+        ],
+        "HealthCheck" : {
+          "Target" : { "Ref": "HealthCheckTarget" },
+          "HealthyThreshold" : "2",
+          "UnhealthyThreshold" : "4",
+          "Interval" : "10",
+          "Timeout" : "5"
+        },
+        "AccessLoggingPolicy": {
+          "S3BucketName": { "Ref" : "AccessLoggingBucket" },
+          "S3BucketPrefix": {
+            "Fn::Join": ["/", [
+              { "Ref": "ServiceName" },
+              { "Ref": "ServiceVersion" }
+            ] ]
+          },
+          "Enabled": "true",
+          "EmitInterval" : "5"
+        }
+      }
+    },
+
+    "LoadBalancerDnsName": {
+      "Type": "AWS::Route53::RecordSet",
+      "Properties": {
+        "HostedZoneId": {
+          "Fn::GetAtt": ["Route53", "Id"]
+        },
+        "Name": {
+          "Fn::Join": ["", [ { "Ref": "AWS::StackName" }, ".", { "Fn::GetAtt": [ "Route53", "Name" ] } ] ]
+        },
+        "Type": "CNAME",
+        "TTL": "60",
+        "ResourceRecords": [
+          { "Fn::GetAtt": [ "LoadBalancer", "DNSName" ] }
+        ]
+      }
+    },
+    
+    "AccessLoggingBucket": {
+      "Type": "AWS::S3::Bucket"
+    },
+
+    "AccessLoggingPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref" : "AccessLoggingBucket"
+        },
+        "PolicyDocument": {
+          "Statement": [ {
+            "Effect": "Allow",
+            "Resource": {
+              "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "AccessLoggingBucket" }, "/*", "/AWSLogs/", { "Ref": "AWS::AccountId" }, "/*" ] ]
+            },
+            "Principal": {
+              "AWS": [{ "Fn::FindInMap" : [ "RegionMap", { "Ref" : "AWS::Region" }, "elbAccount"]}]
+            },
+            "Action": [ "s3:PutObject" ]
+          } ]
+        }
+      }
+    }
+  },
+
+  "Outputs" : {
+    "Region": {
+      "Value": { "Ref": "AWS::Region" },
+      "Description": "AWS Region"
+    },
+    "VpcId": {
+      "Value": { "Fn::GetAtt": [ "Vpc", "VpcId" ] },
+      "Description": "Vpc Id"
+    },
+    "BasicPolicyArn" : {
+      "Value" : { "Ref" : "BasicPolicy" },
+      "Description" : "Basic access required for an EC2 instance"
+    },
+    "Role" : {
+      "Value" : { "Ref": "Role" },
+      "Description": "Role Id"
+    },
+    "PublicHTTPSSecurityGroupId" : {
+      "Value" : { "Ref" : "PublicHTTPSSecurityGroup" },
+      "Description" : "Public HTTPS SecurityGroup ID"
+    },
+    "Route53Id": {
+      "Value": {
+        "Fn::GetAtt": [ "Route53", "Id" ]
+      },
+      "Description": "Route53 Id"
+    },
+    "Route53Name": {
+      "Value": {
+        "Fn::GetAtt": [ "Route53", "Name" ]
+      },
+      "Description": "Route53 Name"
+    },
+    "AmazonDns": {
+      "Value": { "Fn::GetAtt": [ "LoadBalancer", "DNSName" ] },
+      "Description": "Public Amazon DNS"
+    },
+    "AmazonUrl": {
+      "Value": { "Fn::Join": ["", ["https://", { "Fn::GetAtt": [ "LoadBalancer", "DNSName" ] } ] ] },
+      "Description": "Public Amazon URL"
+    },
+    "ServiceDns": {
+      "Value": {"Ref": "LoadBalancerDnsName"},
+      "Description": "Public Friendly DNS"
+    },
+    "ServiceUrl": {
+      "Value": { "Fn::Join": ["", ["https://", {"Ref": "LoadBalancerDnsName"} ] ] },
+      "Description": "Public Friendly URL"
+    },
+    "LoadBalancerID": {
+      "Value": { "Ref": "LoadBalancer" },
+      "Description": "Instance id of the Load Balancer"
+    }
+  }
+}

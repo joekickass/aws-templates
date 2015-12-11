@@ -1,0 +1,266 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+  "Description" : "Single instance template",
+
+  "Parameters": {
+
+    "VpcName": {
+      "Description": "Name of the VPC",
+      "Type": "String",
+      "Default" : "default"
+    },
+    "InstanceType": {
+      "Description": "EC2 instance type",
+      "Type": "String",
+      "Default": "t2.micro"
+    },
+    "ImageName": {
+      "Description": "Name of Image",
+      "Type": "String",
+      "Default": "ami 201604111516"
+    },
+    "KeyName": {
+      "Description": "Existing EC2 KeyPair to enable SSH access",
+      "Type": "String",
+      "Default": "my-key"
+    },
+    "SecurityGroup": {
+      "Description": "EC2 security group",
+      "Type": "String",
+      "Default": "default"
+    }
+  },
+
+  "Conditions": {
+    "UseDefaultSecurityGroup" : { "Fn::Equals": [ { "Ref": "SecurityGroup" }, "default" ] }
+  },
+
+  "Resources" : {
+
+    "Vpc": {
+      "Type": "Custom::VpcDependency",
+      "Properties": {
+        "ServiceToken": {
+            "Fn::Join": [ "", [ "arn:aws:lambda:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":function:vpcDependency" ] ]
+        },
+        "VpcName": { "Ref": "VpcName" }
+      }
+    },
+
+    "Image": {
+      "Type": "Custom::ImageDependency",
+      "Properties": {
+        "ServiceToken": {
+            "Fn::Join": [ "", [ "arn:aws:lambda:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":function:imageDependency" ] ]
+        },
+        "ImageName": { "Ref": "ImageName" }
+      }
+    },
+
+    "Instance" : {
+      "Type" : "AWS::EC2::Instance",
+      "Properties" : {
+        "InstanceType" : {
+          "Ref" : "InstanceType"
+        },
+        "ImageId" : {
+            "Fn::GetAtt" : ["Image", "ImageId"]
+        },
+        "IamInstanceProfile" : {
+            "Ref" : "InstanceProfile"
+        },
+        "KeyName" : {
+          "Ref" : "KeyName"
+        },
+        "SecurityGroupIds" : [
+          { "Fn::If" : [ "UseDefaultSecurityGroup", { "Fn::GetAtt" : ["Vpc", "DefaultSecurityGroup"]  }, { "Ref" : "SecurityGroup" } ] }
+        ]
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Init": {
+          "configSets": {
+            "all": [ "install_cfn", "install_awslogs"]
+          },
+          "install_cfn": {
+            "files": {
+              "/etc/cfn/cfn-hup.conf" : {
+                "content" : { "Fn::Join" : ["", [
+                  "[main]\n",
+                  "stack=", { "Ref" : "AWS::StackName" }, "\n",
+                  "region=", { "Ref" : "AWS::Region" }, "\n",
+                  "interval=1\n"
+                ]]},
+                "mode"    : "000400",
+                "owner"   : "root",
+                "group"   : "root"
+              },
+              "/etc/cfn/hooks.d/cfn-auto-reloader.conf" : {
+                "content": { "Fn::Join" : ["", [
+                  "[cfn-auto-reloader-hook]\n",
+                  "triggers=post.update\n",
+                  "path=Resources.Instance.Metadata.AWS::CloudFormation::Init\n",
+                  "action=/opt/aws/bin/cfn-init -v ",
+                  " --stack ", { "Ref" : "AWS::StackName" },
+                  " --resource Instance ",
+                  " --region ", { "Ref" : "AWS::Region" },
+                  " --configsets all\n",
+                  "runas=root\n"
+                ]]}
+              }
+            },
+            "services" : {
+              "sysvinit" : {
+                "cfn-hup" : {
+                  "enabled" : "true",
+                  "ensureRunning" : "true",
+                  "files" : [
+                    "/etc/cfn/cfn-hup.conf",
+                    "/etc/cfn/hooks.d/cfn-auto-reloader.conf"
+                  ]
+                }
+              }
+            }
+          },
+          "install_awslogs" : {
+            "files" : {
+              "/etc/awslogs/awslogs.conf": {
+                "content": {
+                  "Fn::Join": ["", [
+                    "[general]\n",
+                    "state_file= /var/awslogs/state/agent-state\n",
+
+                    "[/var/log/cfn-hup.log]\n",
+                    "file = /var/log/cfn-hup.log\n",
+                    "log_group_name = ", { "Ref": "LogGroup" }, "\n",
+                    "log_stream_name = service-{instance_id}/cfn-hup.log\n",
+                    "datetime_format = \n",
+
+                    "[/var/log/cfn-init.log]\n",
+                    "file = /var/log/cfn-init.log\n",
+                    "log_group_name = ", { "Ref": "LogGroup" }, "\n",
+                    "log_stream_name = service-{instance_id}/cfn-init.log\n",
+                    "datetime_format = \n",
+
+                    "[/var/log/cfn-init-cmd.log]\n",
+                    "file = /var/log/cfn-init-cmd.log\n",
+                    "log_group_name = ", { "Ref": "LogGroup" }, "\n",
+                    "log_stream_name = service-{instance_id}/cfn-init-cmd.log\n",
+                    "datetime_format = \n"
+                  ]]
+                },
+                "mode": "000444",
+                "owner": "root",
+                "group": "root"
+              }
+            },
+            "commands" : {
+              "1-create-awslogs-state-directory" : {
+                "command" : "mkdir -p /var/awslogs"
+              },
+              "2-install-awslogs-agent" : {
+                "command" : { "Fn::Join": [ "", [
+                  "curl https://s3.amazonaws.com/aws-cloudwatch/downloads/latest/awslogs-agent-setup.py | python - -n -r ",
+                  { "Ref" : "AWS::Region" },
+                  " -c /etc/awslogs/awslogs.conf\n"
+                ] ] }
+              }
+            },
+            "services" : {
+              "sysvinit": {
+                "awslogs": { 
+                    "enabled" : "true", 
+                    "ensureRunning" : "true", 
+                    "files" : [ "/etc/awslogs/awslogs.conf" ]
+                } 
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "InstanceProfile" : {
+      "Type" : "AWS::IAM::InstanceProfile",
+      "Properties" : {
+        "Path" : "/",
+        "Roles" : { "Ref": "Role" }
+      }
+    },
+
+    "Role" : {
+      "Type" : "AWS::IAM::Role",
+      "Properties" : {
+        "AssumeRolePolicyDocument" : {
+          "Version" : "2012-10-17",
+          "Statement" : [
+            {
+              "Effect" : "Allow",
+              "Principal" : {
+                "Service" : [ "ec2.amazonaws.com" ]
+              },
+              "Action": [ "sts:AssumeRole" ]
+            }
+          ]
+        },
+        "Path": "/",
+        "ManagedPolicyArns": [ { "Ref" : "LogsPolicy" } ]
+      }
+    },
+
+    "LogsPolicy" : {
+      "Type" : "AWS::IAM::ManagedPolicy",
+      "Properties" : {
+        "Description" : "Permissions needed by cloudwatch logs agent",
+        "PolicyDocument" : {
+          "Version" : "2012-10-17",
+          "Statement" : [
+            {
+              "Effect" : "Allow",
+              "Action" : [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents",
+                "logs:DescribeLogStreams"
+              ],
+              "Resource" : "arn:aws:logs:*:*:*"
+            }
+          ]
+        }
+      }
+    },
+
+    "LogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "RetentionInDays": 7
+      }
+    }
+  },
+
+  "Outputs" : {
+    "Region": {
+      "Value": { "Ref": "AWS::Region" },
+      "Description": "AWS Region"
+    },
+    "VpcId": {
+      "Value": { "Fn::GetAtt": [ "Vpc", "VpcId" ] },
+      "Description": "Vpc Id"
+    },
+    "LogsPolicyArn" : {
+      "Value" : { "Ref" : "LogsPolicy" },
+      "Description" : "Basic access required for an EC2 instance"
+    },
+    "Role" : {
+      "Value" : { "Ref": "Role" },
+      "Description": "Role Id"
+    },
+    "InstanceId" : {
+      "Value" : { "Ref" : "Instance" },
+      "Description" : "Instance id"
+    },
+    "InstanceUrl" : {
+      "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "Instance", "PublicDnsName" ] } ] ] },
+      "Description" : "Public Amazon URL"
+    }
+  }
+}

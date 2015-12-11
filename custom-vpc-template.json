@@ -1,0 +1,155 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+  "Description" : "Private VPC template",
+
+  "Resources" : {
+
+    "DevVpc" : {
+      "Type" : "AWS::EC2::VPC",
+      "Properties" : {
+        "CidrBlock" : "10.0.0.0/16",
+        "Tags" : [
+            { "Key" : "Name", "Value" : "DevVpc" },
+            { "Key" : "Env", "Value" : "dev" } ]
+      }
+    },
+
+    "DevIgw" : {
+      "Type" : "AWS::EC2::InternetGateway",
+      "Properties" : {
+        "Tags" : [
+            { "Key" : "Name", "Value" : "DevIgw" },
+            { "Key" : "Env", "Value" : "dev" } ]
+      }
+    },
+
+    "DevIgwAtt" : {
+      "Type" : "AWS::EC2::VPCGatewayAttachment",
+      "Properties" : {
+        "VpcId" : { "Ref" : "DevVpc" },
+        "InternetGatewayId" : { "Ref" : "DevIgw" }
+      }
+    },
+
+    "DevPrivSub1" : {
+      "Type" : "AWS::EC2::Subnet",
+      "Properties" : {
+        "VpcId" : { "Ref" : "DevVpc" },
+        "CidrBlock" : "10.0.1.0/24",
+        "AvailabilityZone" : "eu-west-1a",
+        "Tags": [
+            { "Key" : "Name", "Value" : "DevPrivSub1" },
+            { "Key": "Env", "Value" : "dev" } ]
+      }
+    },
+
+    "DevPrivSub2": {
+      "Type" : "AWS::EC2::Subnet",
+      "Properties" : {
+        "VpcId" : { "Ref" : "DevVpc" },
+        "CidrBlock" : "10.0.2.0/24",
+        "AvailabilityZone" : "eu-west-1b",
+        "Tags" : [
+            { "Key" : "Name", "Value" : "DevPrivSub2" },
+            { "Key" : "Env", "Value" : "dev" } ]
+      }
+    },
+
+    "DevPubSub1" : {
+      "Type" : "AWS::EC2::Subnet",
+      "Properties" : {
+        "VpcId" : { "Ref" : "DevVpc" },
+        "CidrBlock" : "10.0.3.0/24",
+        "AvailabilityZone" : "eu-west-1a",
+        "Tags": [
+            { "Key" : "Name", "Value" : "DevPubSub1" },
+            { "Key" : "Env", "Value" : "dev" } ]
+      }
+    },
+
+    "DevPubSub2" : {
+      "Type": "AWS::EC2::Subnet",
+      "Properties" : {
+        "VpcId" : { "Ref" : "DevVpc" },
+        "CidrBlock" : "10.0.4.0/24",
+        "AvailabilityZone" : "eu-west-1b",
+        "Tags": [
+            { "Key" : "Name", "Value" : "DevPubSub2" },
+            { "Key" : "Env", "Value" : "dev" } ]
+      }
+    },
+
+    "DevPrivRt" : {
+      "Type" : "AWS::EC2::RouteTable",
+      "Properties" : {
+        "VpcId" : { "Ref" : "DevVpc" },
+        "Tags": [
+            { "Key" : "Name", "Value" : "DevPrivRt" },
+            { "Key" : "Env", "Value" : "dev" } ]
+      }
+    },
+
+    "DevPubRt" : {
+      "Type" : "AWS::EC2::RouteTable",
+      "Properties" : {
+        "VpcId" : { "Ref" : "DevVpc" },
+        "Tags": [
+            { "Key" : "Name", "Value": "DevPubRt" },
+            { "Key" : "Env", "Value" : "dev" } ]
+      }
+    },
+
+    "DevPubRoute" : {
+      "Type" : "AWS::EC2::Route",
+      "DependsOn" : "DevIgwAtt",
+      "Properties" : {
+        "RouteTableId" : { "Ref" : "DevPubRt" },
+        "DestinationCidrBlock" : "0.0.0.0/0",
+        "GatewayId" : { "Ref" : "DevIgw" }
+      }
+    },
+
+    "DevPrivSub1RtAss" : {
+      "Type" : "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties" : {
+        "RouteTableId" : { "Ref" : "DevPrivRt" },
+        "SubnetId" : { "Ref" : "DevPrivSub1" }
+      }
+    },
+
+    "DevPrivSub2RtAss" : {
+      "Type" : "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties" : {
+        "RouteTableId" : { "Ref" : "DevPrivRt" },
+        "SubnetId" : { "Ref" : "DevPrivSub2" }
+      }
+    },
+
+    "DevPubSub1RtAss" : {
+      "Type" : "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties" : {
+        "RouteTableId" : { "Ref" : "DevPubRt" },
+        "SubnetId" : { "Ref" : "DevPubSub1" }
+      }
+    },
+
+    "DevPubSub2RtAss" : {
+      "Type" : "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties" : {
+        "RouteTableId" : { "Ref" : "DevPubRt" },
+        "SubnetId" : { "Ref" : "DevPubSub2" }
+      }
+    },
+
+    "DevSgPriv": {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupDescription" : "Default security group for DevVpc",
+        "VpcId" : { "Ref" : "DevVpc" },
+        "Tags": [
+            { "Key" : "Name", "Value" : "DevPrivSg" },
+            { "Key" : "Env", "Value" : "dev" } ]
+      }
+    }
+  }
+}

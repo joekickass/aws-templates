@@ -1,0 +1,366 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+  "Description" : "Docker instance template",
+
+  "Parameters": {
+
+    "VpcName": {
+      "Description": "Name of the VPC",
+      "Type": "String",
+      "Default" : "default"
+    },
+    "InstanceType": {
+      "Description": "EC2 instance type",
+      "Type": "String",
+      "Default": "t2.micro"
+    },
+    "ImageName": {
+      "Description": "Name of Image",
+      "Type": "String",
+      "Default": "ami 201604111516"
+    },
+    "KeyName": {
+      "Description": "Existing EC2 KeyPair to enable SSH access",
+      "Type": "String",
+      "Default": "my-key"
+    },
+    "DockerFlags": {
+      "Description": "docker run flags",
+      "Type": "String",
+      "Default": "-p 80:80"
+    },
+    "RepositoryName": {
+      "Description": "Name of ECR repository",
+      "Type": "String"
+    },
+    "ServiceName": {
+      "Description": "Name of service",
+      "Type": "String"
+    },
+    "ServiceVersion": {
+      "Description": "Version of the service",
+      "Type": "String"
+    }
+  },
+
+  "Resources" : {
+
+    "Vpc": {
+      "Type": "Custom::VpcDependency",
+      "Properties": {
+        "ServiceToken": {
+            "Fn::Join": [ "", [ "arn:aws:lambda:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":function:vpcDependency" ] ]
+        },
+        "VpcName": { "Ref": "VpcName" }
+      }
+    },
+
+    "Image": {
+      "Type": "Custom::ImageDependency",
+      "Properties": {
+        "ServiceToken": {
+            "Fn::Join": [ "", [ "arn:aws:lambda:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":function:imageDependency" ] ]
+        },
+        "ImageName": { "Ref": "ImageName" }
+      }
+    },
+
+    "PublicHTTPSSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Public HTTPS access",
+        "VpcId": {
+          "Fn::GetAtt": [ "Vpc", "VpcId" ]
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "443",
+            "ToPort": "443",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "80",
+            "ToPort": "80",
+            "CidrIp": "0.0.0.0/0"
+          }
+        ]
+      }
+    },
+
+    "Instance" : {
+      "Type" : "AWS::EC2::Instance",
+      "Properties" : {
+        "InstanceType" : {
+          "Ref" : "InstanceType"
+        },
+        "ImageId" : {
+            "Fn::GetAtt" : ["Image", "ImageId"]
+        },
+        "IamInstanceProfile" : {
+            "Ref" : "InstanceProfile"
+        },
+        "KeyName" : {
+          "Ref" : "KeyName"
+        },
+        "SecurityGroupIds" : [ {
+          "Ref" : "PublicHTTPSSecurityGroup"
+        } ],
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": ["", [
+              "#!/bin/sh\n",
+
+              "/opt/aws/bin/cfn-init -v ",
+              " --stack ", { "Ref" : "AWS::StackName" },
+              " --resource DockerInstance ",
+              " --region ", { "Ref" : "AWS::Region" },
+              " --configsets all\n",
+
+              "/opt/aws/bin/cfn-signal ",
+              " --exit-code $? ",
+              " --reason \"Docker server up\" '",
+              { "Ref" : "WaitHandle" },
+              "'\n",
+              "/opt/aws/bin/cfn-hup\n"
+            ] ]
+          }
+        },
+        "Metadata": {
+          "AWS::CloudFormation::Init": {
+            "configSets": {
+              "all": [ "install_cfg", "install_docker", "start_docker" ]
+            },
+            "install_cfg": {
+              "files": {
+                "/tmp/docker-start.sh": {
+                  "content": { "Fn::Join": [ "", [
+                    "#!/bin/bash -x\n",
+                    "docker stop app",
+                    "\n",
+                    "docker rm app",
+                    "\n",
+                    "docker run -d ",
+                    { "Ref": "DockerFlags" },
+                    " --add-host=dockerhost:$(ifconfig docker0 | grep 'inet addr' | sed -r 's/.*inet addr:([0-9.]*).*$/\\1/') \\\n",
+                    " --env STATSD_HOST=dockerhost \\\n",
+                    " --env-file ./stack-outputs.env \\\n",
+                    " --restart always \\\n",
+                    " --log-opt max-size=128m --log-opt max-file=8 \\\n",
+                    " --name app ",
+                    { "Ref" : "AWS::AccountId" },
+                    ".dkr.ecr.",
+                    { "Ref" : "AWS::Region" },
+                    ".amazonaws.com/",
+                    { "Ref": "RepositoryName" },
+                    "/",
+                    { "Ref": "ServiceName" },
+                    ":",
+                    { "Ref": "ServiceVersion" },
+                    "\n"
+                  ] ] },
+                  "mode"  : "0755",
+                  "owner" : "root",
+                  "group" : "root"
+                },
+                "/tmp/stack-outputs.env": {
+                  "content" :  { "Fn::Join" : ["", [
+                    "ServiceName=",
+                    { "Ref": "ServiceName" },
+                    "\n",
+                    "ServiceVersion=",
+                    { "Ref": "ServiceVersion" },
+                    "\n"
+                  ] ] }
+                },
+                "/etc/cfn/cfn-hup.conf" : {
+                  "content" : { "Fn::Join" : ["", [
+                    "[main]\n",
+                    "stack=", { "Ref" : "AWS::StackName" }, "\n",
+                    "region=", { "Ref" : "AWS::Region" }, "\n",
+                    "interval=1\n"
+                  ] ] },
+                  "mode"    : "000400",
+                  "owner"   : "root",
+                  "group"   : "root"
+                },
+                "/etc/cfn/hooks.d/cfn-auto-reloader.conf" : {
+                  "content": { "Fn::Join" : ["", [
+                    "[cfn-auto-reloader-hook]\n",
+                    "triggers=post.update\n",
+                    "path=Resources.DockerInstance.Metadata.AWS::CloudFormation::Init\n",
+                    "action=/opt/aws/bin/cfn-init -v ",
+                    " --stack ", { "Ref" : "AWS::StackName" },
+                    " --resource DockerInstance ",
+                    " --region ", { "Ref" : "AWS::Region" },
+                    " --configsets all\n",
+                    "runas=root\n"
+                  ] ] }
+                }
+              },
+              "services" : {
+                "sysvinit" : {
+                  "cfn-hup" : {
+                    "enabled" : "true",
+                    "ensureRunning" : "true",
+                    "files" : [
+                      "/etc/cfn/cfn-hup.conf",
+                      "/etc/cfn/hooks.d/cfn-auto-reloader.conf"
+                    ]
+                  }
+                }
+              }
+            },
+            "install_docker": {
+              "commands": {
+                "1-create-app-dir": {
+                  "command": "mkdir -p /srv/app"
+                },
+                "2-move-files": {
+                  "command": "mv -f /tmp/*.sh /tmp/*.env /srv/app"
+                }
+              }
+            },
+            "start_docker": {
+              "commands": {
+                "1-docker-login-ecr": {
+                  "command": {
+                    "Fn::Join": ["", [
+                      "$(aws ecr get-login --region ", { "Ref" : "AWS::Region" }, ")"
+                    ] ]
+                  }
+                },
+                "2-docker-pull": {
+                  "command": {
+                    "Fn::Join": ["", [
+                      "docker pull ",
+                      { "Ref" : "AWS::AccountId" },
+                      ".dkr.ecr.",
+                      { "Ref" : "AWS::Region" },
+                      ".amazonaws.com/",
+                      { "Ref": "RepositoryName" },
+                      "/",
+                      { "Ref": "ServiceName" },
+                      ":",
+                      { "Ref": "ServiceVersion" }
+                    ]]
+                  }
+                },
+                "3-docker-start": {
+                  "command": "(cd /srv/app && ./docker-start.sh)"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "InstanceProfile" : {
+      "Type" : "AWS::IAM::InstanceProfile",
+      "Properties" : {
+        "Path" : "/",
+        "Roles" : { "Ref": "Role" }
+      }
+    },
+
+    "Role" : {
+      "Type" : "AWS::IAM::Role",
+      "Properties" : {
+        "AssumeRolePolicyDocument" : {
+          "Version" : "2012-10-17",
+          "Statement" : [
+            {
+              "Effect" : "Allow",
+              "Principal" : {
+                "Service" : [ "ec2.amazonaws.com" ]
+              },
+              "Action": [ "sts:AssumeRole" ]
+            }
+          ]
+        },
+        "Path": "/",
+        "ManagedPolicyArns": [ { "Ref" : "BasicPolicy" } ]
+      }
+    },
+
+    "BasicPolicy" : {
+      "Type" : "AWS::IAM::ManagedPolicy",
+      "Properties" : {
+        "Description" : "Basic access required for an EC2 instance",
+        "PolicyDocument" : {
+          "Version" : "2012-10-17",
+          "Statement" : [
+            {
+              "Effect" : "Allow",
+              "Action" : [
+                "ec2:Describe*",
+                "elasticloadbalancing:Describe*",
+                "autoscaling:Describe*",
+                "cloudwatch:Describe*",
+                "cloudwatch:List*",
+                "cloudwatch:Get*",
+                "sns:Get*",
+                "sns:List*",
+                "cloudformation:Describe*",
+                "cloudformation:Get*",
+                "cloudformation:List*",
+                "cloudformation:Validate*",
+                "cloudformation:Estimate*",
+                "ecr:BatchCheckLayerAvailability",
+                "ecr:BatchGetImage",
+                "ecr:GetDownloadUrlForLayer",
+                "ecr:GetAuthorizationToken"
+              ],
+              "Resource" : "*"
+            }
+          ]
+        }
+      }
+    },
+
+    "WaitHandle" : {
+      "Type" : "AWS::CloudFormation::WaitConditionHandle"
+    },
+
+    "WaitCondition" : {
+      "Type" : "AWS::CloudFormation::WaitCondition",
+      "Properties" : {
+        "Handle" : {"Ref" : "WaitHandle"},
+        "Timeout" : "300"
+      }
+    }
+  },
+
+  "Outputs" : {
+    "Region": {
+      "Value": { "Ref": "AWS::Region" },
+      "Description": "AWS Region"
+    },
+    "VpcId": {
+      "Value": { "Fn::GetAtt": [ "Vpc", "VpcId" ] },
+      "Description": "Vpc Id"
+    },
+    "BasicPolicyArn" : {
+      "Value" : { "Ref" : "BasicPolicy" },
+      "Description" : "Basic access required for an EC2 instance"
+    },
+    "Role" : {
+      "Value" : { "Ref": "Role" },
+      "Description": "Role Id"
+    },
+    "PublicHTTPSSecurityGroupId" : {
+      "Value" : { "Ref" : "PublicHTTPSSecurityGroup" },
+      "Description" : "Public HTTPS SecurityGroup ID"
+    },
+    "InstanceId" : {
+      "Value" : { "Ref" : "Instance" },
+      "Description" : "Instance id"
+    },
+    "InstanceUrl" : {
+      "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "Instance", "PublicDnsName" ] } ] ] },
+      "Description" : "Public Amazon URL"
+    }
+  }
+}
