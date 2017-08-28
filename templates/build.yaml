@@ -1,0 +1,139 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Create the CodePipeline resources'
+
+
+Parameters:
+
+  GitHubRepo:
+    Type: String
+
+  GitHubBranch:
+    Type: String
+
+  GitHubToken:
+    Type: String
+    Description: See http://docs.aws.amazon.com/codepipeline/latest/userguide/pipelines-edit.html#pipelines-edit-cli
+
+  GitHubUser:
+    Type: String
+
+
+Resources:
+
+  ArtifactStoreBucket:
+    Type: AWS::S3::Bucket
+
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      ArtifactStore:
+        Location: !Ref ArtifactStoreBucket
+        Type: S3
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: ExampleApiSource
+              ActionTypeId:
+                Category: Source
+                Owner: ThirdParty
+                Version: 1
+                Provider: GitHub
+              Configuration:
+                Owner: !Ref GitHubUser
+                Repo: !Ref GitHubRepo
+                Branch: !Ref GitHubBranch
+                OAuthToken: !Ref GitHubToken
+              OutputArtifacts:
+                - Name: !Sub ${AWS::StackName}-Source
+              RunOrder: 1
+        - Name: Build
+          Actions:
+          - Name: Build
+            ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+            InputArtifacts:
+              - Name: !Sub ${AWS::StackName}-Source
+            OutputArtifacts:
+              - Name: !Sub ${AWS::StackName}-Build
+            Configuration:
+                ProjectName: !Ref CodeBuildProject
+            RunOrder: 1
+        - Name: Deploy
+          Actions:
+          - Name: Deploy
+            ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+            InputArtifacts:
+              - Name: !Sub ${AWS::StackName}-Build
+            Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: !Sub CodePipeline-${AWS::StackName}
+            RunOrder: 1
+
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          Effect: Allow
+          Principal:
+            Service: codepipeline.amazonaws.com
+          Action: sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub CBProject-${AWS::StackName}
+      Artifacts:
+        Location: !Ref ArtifactStoreBucket
+        Type: "S3"
+      Source:
+        Location: !Sub ${ArtifactStoreBucket}/source.zip
+        Type: "S3"
+        BuildSpec: |
+          version: 0.2
+          phases:
+            install:
+              commands:
+                - !Sub "aws cloudformation package --template-file templates/api.yaml --s3-bucket $bucketName --output-template-file packed-template.yaml"
+          artifacts:
+            type: zip
+            files:
+              - packed-template.yaml
+      Environment:
+        ComputeType: "BUILD_GENERAL1_SMALL"
+        Image: "aws/codebuild/docker:1.12.1"
+        Type: "LINUX_CONTAINER"
+        EnvironmentVariables:
+          - Name: bucketName
+            Value: !Ref ArtifactStoreBucket
+      ServiceRole: !Ref CodeBuildRole
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          Effect: Allow
+          Principal:
+            Service: codebuild.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+
+
+Outputs:
+  Stack:
+    Value: !Ref AWS::StackName
