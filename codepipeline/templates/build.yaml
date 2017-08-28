@@ -34,7 +34,7 @@ Resources:
       Stages:
         - Name: Source
           Actions:
-            - Name: ExampleApiSource
+            - Name: FetchSource
               ActionTypeId:
                 Category: Source
                 Owner: ThirdParty
@@ -50,7 +50,7 @@ Resources:
               RunOrder: 1
         - Name: Build
           Actions:
-          - Name: Build
+          - Name: PackageSAM
             ActionTypeId:
                 Category: Build
                 Owner: AWS
@@ -107,6 +107,8 @@ Resources:
           phases:
             install:
               commands:
+                - pip install --upgrade awscli
+                - aws --version
                 - !Sub "aws cloudformation package --template-file templates/api.yaml --s3-bucket $bucketName --output-template-file packed-template.yaml"
           artifacts:
             type: zip
@@ -114,7 +116,7 @@ Resources:
               - packed-template.yaml
       Environment:
         ComputeType: "BUILD_GENERAL1_SMALL"
-        Image: "aws/codebuild/docker:1.12.1"
+        Image: "aws/codebuild/eb-python-2.7-amazonlinux-64:2.1.6"
         Type: "LINUX_CONTAINER"
         EnvironmentVariables:
           - Name: bucketName
