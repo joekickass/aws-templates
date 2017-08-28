@@ -67,29 +67,30 @@ Resources:
           Actions:
           - Name: CreateChangeSet
             ActionTypeId:
-                Category: Deploy
-                Owner: AWS
-                Version: 1
-                Provider: CloudFormation
+              Category: Deploy
+              Owner: AWS
+              Version: 1
+              Provider: CloudFormation
             InputArtifacts:
               - Name: !Sub ${AWS::StackName}-Build
             Configuration:
-                ActionMode: CHANGE_SET_REPLACE
-                TemplatePath: !Sub "${AWS::StackName}-Build::packed-template.yaml"
-                ChangeSetName: !Sub "${AWS::StackName}-ChangeSet"
-                StackName: !Sub CodePipeline-${AWS::StackName}
-                RoleArn: !GetAtt CloudFormationRole.Arn
+              ActionMode: CHANGE_SET_REPLACE
+              TemplatePath: !Sub "${AWS::StackName}-Build::packed-template.yaml"
+              ChangeSetName: !Sub "${AWS::StackName}-ChangeSet"
+              StackName: !Sub ExampleApi-${Milieu}
+              RoleArn: !GetAtt CloudFormationRole.Arn
+              Capabilities: CAPABILITY_IAM
             RunOrder: 1
           - Name: ExecuteChangeSet
             ActionTypeId:
-                Category: Deploy
-                Owner: AWS
-                Version: 1
-                Provider: CloudFormation
+              Category: Deploy
+              Owner: AWS
+              Version: 1
+              Provider: CloudFormation
             Configuration:
-                ActionMode: CHANGE_SET_EXECUTE
-                ChangeSetName: !Sub "${AWS::StackName}-ChangeSet"
-                StackName: !Sub CodePipeline-${AWS::StackName}
+              ActionMode: CHANGE_SET_EXECUTE
+              ChangeSetName: !Sub "${AWS::StackName}-ChangeSet"
+              StackName: !Sub ExampleApi-${Milieu}
             RunOrder: 2
 
   CodeBuildProject:
