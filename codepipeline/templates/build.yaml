@@ -74,6 +74,7 @@ Resources:
               - Name: !Sub ${AWS::StackName}-Build
             Configuration:
                 ActionMode: CREATE_UPDATE
+                TemplatePath: !Sub ${AWS::StackName}-Build:packed-template.yaml
                 StackName: !Sub CodePipeline-${AWS::StackName}
                 RoleArn: !GetAtt CloudFormationRole.Arn
             RunOrder: 1
