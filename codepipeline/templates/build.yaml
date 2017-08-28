@@ -27,6 +27,7 @@ Resources:
     Type: AWS::CodePipeline::Pipeline
     Properties:
       RoleArn: !GetAtt CodePipelineRole.Arn
+      RestartExecutionOnUpdate: true
       ArtifactStore:
         Location: !Ref ArtifactStoreBucket
         Type: S3
@@ -64,7 +65,7 @@ Resources:
             RunOrder: 1
         - Name: Deploy
           Actions:
-          - Name: Deploy
+          - Name: CreateChangeSet
             ActionTypeId:
                 Category: Deploy
                 Owner: AWS
@@ -73,11 +74,23 @@ Resources:
             InputArtifacts:
               - Name: !Sub ${AWS::StackName}-Build
             Configuration:
-                ActionMode: CREATE_UPDATE
-                TemplatePath: !Sub ${AWS::StackName}-Build:packed-template.yaml
+                ActionMode: CHANGE_SET_REPLACE
+                TemplatePath: !Sub "${AWS::StackName}-Build::packed-template.yaml"
+                ChangeSetName: !Sub "${AWS::StackName}-ChangeSet"
                 StackName: !Sub CodePipeline-${AWS::StackName}
                 RoleArn: !GetAtt CloudFormationRole.Arn
             RunOrder: 1
+          - Name: ExecuteChangeSet
+            ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+            Configuration:
+                ActionMode: CHANGE_SET_EXECUTE
+                ChangeSetName: !Sub "${AWS::StackName}-ChangeSet"
+                StackName: !Sub CodePipeline-${AWS::StackName}
+            RunOrder: 2
 
   CodeBuildProject:
     Type: AWS::CodeBuild::Project
