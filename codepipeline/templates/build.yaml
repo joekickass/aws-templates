@@ -4,6 +4,14 @@ Description: 'Create the CodePipeline resources'
 
 Parameters:
 
+  Milieu:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - stage
+      - prod
+
   GitHubRepo:
     Type: String
 
