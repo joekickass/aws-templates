@@ -1,0 +1,62 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Jenkins ECS example
+
+TODO!
+
+# https://github.com/jenkinsci/docker/blob/master/README.md
+# http://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/quickref-ecs.html
+# https://github.com/awslabs/ecs-refarch-continuous-deployment/blob/master/templates/deployment-pipeline.yaml
+Resources:
+
+ EcrPullGroup:
+    Type: AWS::IAM::Group
+
+  EcrPushPullGroup:
+    Type: AWS::IAM::Group
+
+  DockerRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryPolicyText:
+        Version: '2008-10-17'
+        Statement:
+          -
+            Sid: AllowPull
+            Effect: Allow
+            Principal:
+              AWS:
+                - !GetAtt EcrPullGroup.Arn
+                - !GetAtt EcrPushGroup.Arn
+            Action:
+              - ecr:GetAuthorizationToken
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+              - ecr:BatchCheckLayerAvailability
+          -
+            Sid: AllowPush
+            Effect: Allow
+            Principal:
+              AWS:
+                - !GetAtt EcrPushPullGroup.Arn
+            Action:
+              - ecr:GetAuthorizationToken
+              - ecr:PutImage
+              - ecr:InitiateLayerUpload
+              - ecr:UploadLayerPart
+              - ecr:CompleteLayerUpload
+
+  DockerCluster:
+    Type: AWS::ECS::Cluster
+
+  DockerService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref DockerCluster
+
+
+Outputs:
+
+  JenkinsProjectName:
+    Description: The name of the Jenkins project needed by CodePipeline
+    Value: ???

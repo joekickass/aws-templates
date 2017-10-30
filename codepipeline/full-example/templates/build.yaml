@@ -58,17 +58,17 @@ Resources:
               RunOrder: 1
         - Name: Build
           Actions:
-          - Name: PackageSAM
-            ActionTypeId:
+            - Name: PackageSAM
+              ActionTypeId:
                 Category: Build
                 Owner: AWS
                 Version: 1
                 Provider: CodeBuild
-            InputArtifacts:
-              - Name: !Sub ${AWS::StackName}-Source
-            OutputArtifacts:
-              - Name: !Sub ${AWS::StackName}-Build
-            Configuration:
+              InputArtifacts:
+                - Name: !Sub ${AWS::StackName}-Source
+              OutputArtifacts:
+                - Name: !Sub ${AWS::StackName}-Build
+              Configuration:
                 ProjectName: !Ref CodeBuildProject
             RunOrder: 1
         - Name: Deploy
@@ -83,8 +83,8 @@ Resources:
               - Name: !Sub ${AWS::StackName}-Build
             Configuration:
               ActionMode: CHANGE_SET_REPLACE
-              TemplatePath: !Sub "${AWS::StackName}-Build::packed-template.yaml"
-              ChangeSetName: !Sub "${AWS::StackName}-ChangeSet"
+              TemplatePath: !Sub ${AWS::StackName}-Build::packed-template.yaml
+              ChangeSetName: !Sub ${AWS::StackName}-ChangeSet
               StackName: !Sub ExampleApi-${Milieu}
               RoleArn: !GetAtt CloudFormationRole.Arn
               Capabilities: CAPABILITY_IAM
@@ -97,38 +97,34 @@ Resources:
               Provider: CloudFormation
             Configuration:
               ActionMode: CHANGE_SET_EXECUTE
-              ChangeSetName: !Sub "${AWS::StackName}-ChangeSet"
+              ChangeSetName: !Sub ${AWS::StackName}-ChangeSet
               StackName: !Sub ExampleApi-${Milieu}
             RunOrder: 2
 
   CodeBuildProject:
     Type: AWS::CodeBuild::Project
     Properties:
-      Name: !Sub CBProject-${AWS::StackName}
-      Artifacts:
-        Location: !Ref ArtifactStoreBucket
-        Type: "S3"
+      Name: !Sub ${AWS::StackName}-CodeBuildProject
       Source:
-        Location: !Sub ${ArtifactStoreBucket}/source.zip
-        Type: "S3"
+        Type: CODEPIPELINE
         BuildSpec: |
           version: 0.2
           phases:
             install:
               commands:
-                - pip install --upgrade awscli
-                - aws --version
-                - !Sub "aws cloudformation package --template-file templates/api.yaml --s3-bucket $bucketName --output-template-file packed-template.yaml"
+                - !Sub 'aws cloudformation package --template-file templates/api.yaml --s3-bucket $BUCKET_NAME --output-template-file packed-template.yaml'
           artifacts:
             type: zip
             files:
               - packed-template.yaml
+      Artifacts:
+        Type: CODEPIPELINE
       Environment:
-        ComputeType: "BUILD_GENERAL1_SMALL"
-        Image: "aws/codebuild/eb-python-2.7-amazonlinux-64:2.1.6"
-        Type: "LINUX_CONTAINER"
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/ubuntu-base:14.04
+        Type: LINUX_CONTAINER
         EnvironmentVariables:
-          - Name: bucketName
+          - Name: BUCKET_NAME
             Value: !Ref ArtifactStoreBucket
       ServiceRole: !Ref CodeBuildRole
 
@@ -136,42 +132,104 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
-        Version: "2012-10-17"
+        Version: '2012-10-17'
         Statement:
           Effect: Allow
           Principal:
             Service: codepipeline.amazonaws.com
           Action: sts:AssumeRole
       Path: /
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AdministratorAccess
+      Policies:
+        # No logging policy. Seems CodePipeline does not log to CloudWatch Logs
+        - PolicyName: read-write-artifactstore-bucket
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource: !Sub '${ArtifactStoreBucket.Arn}/*'
+        - PolicyName: code-build
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                Resource: '*'
+        - PolicyName: cloudformation
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:UpdateStack
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:SetStackPolicy
+                  - cloudformation:ValidateTemplate
+                  - iam:PassRole
+                Resource: '*'
 
   CodeBuildRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
-        Version: "2012-10-17"
+        Version: '2012-10-17'
         Statement:
           Effect: Allow
           Principal:
             Service: codebuild.amazonaws.com
           Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AdministratorAccess
+      Path: /
+      Policies:
+        - PolicyName: logs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: 'arn:aws:logs:*:*:*'
+        - PolicyName: read-write-artifactstore-bucket
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource: !Sub '${ArtifactStoreBucket.Arn}/*'                
+                
 
   CloudFormationRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
-        Version: "2012-10-17"
+        Version: '2012-10-17'
         Statement:
           Effect: Allow
           Principal:
             Service: cloudformation.amazonaws.com
           Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AdministratorAccess
-
-Outputs:
-  Stack:
-    Value: !Ref AWS::StackName
+      Path: /
+      Policies:
+        - PolicyName: logs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: 'arn:aws:logs:*:*:*'

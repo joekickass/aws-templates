@@ -1,0 +1,78 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Jenkins build example
+
+
+Parameters:
+
+  JenkinsProjectName:
+    Type: String
+
+
+Resources:
+
+  ArtifactStoreBucket:
+    Type: AWS::S3::Bucket
+
+  # See http://docs.aws.amazon.com/codepipeline/latest/APIReference/API_ActionTypeId.html
+  # http://docs.aws.amazon.com/codepipeline/latest/userguide/reference-pipeline-structure.html#action-requirements
+  # http://docs.aws.amazon.com/codepipeline/latest/userguide/tutorials-four-stage-pipeline.html
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      ArtifactStore:
+        Location: !Ref ArtifactStoreBucket
+        Type: S3
+      Stages:
+        - Name: Build
+          Actions:
+            - Name: JenkinsBuild
+              ActionTypeId:
+                Category: Build
+                Owner: Custom
+                Version: 1
+                Provider: Jenkins
+              InputArtifacts:
+                - Name: !Sub ${AWS::StackName}-Source
+              OutputArtifacts:
+                - Name: !Sub ${AWS::StackName}-Build
+              Configuration:
+                ProjectName: !Ref JenkinsProjectName
+
+  # http://docs.aws.amazon.com/codepipeline/latest/userguide/iam-identity-based-access-control.html
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          Effect: Allow
+          Principal:
+            Service: codepipeline.amazonaws.com
+          Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: read-write-artifactstore-bucket
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub '${ArtifactStoreBucket.Arn}/*'
+
+Outputs:
+
+  DockerRepositoryName:
+    Description: Name of the ECR
+    Value: !Ref DockerRepository
+
+  DockerRepositoryPullGroup:
+    Description: Group for users with pull access from ECR
+    Value: !GetAtt EcrPullGroup.Arn
+
+  DockerRepositoryPushPullGroup:
+    Description: Group for users with push and pull access to ECR
+    Value: !GetAtt EcrPushPullGroup.Arn
